@@ -30,6 +30,7 @@ import (
 	"github.com/froghub-io/filecoin-sealer-recover/export"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/mitchellh/go-homedir"
+	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 	"io/ioutil"
@@ -39,6 +40,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bytes"
+	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/filecoin-project/lotus/api/v0api"
+
+
 )
 
 var log = logging.Logger("recover")
@@ -127,7 +133,14 @@ var RecoverCmd = &cli.Command{
 
 		rp.SectorInfos = sectorInfos
 
-		if err = RecoverSealedFile(ctx, rp, cctx.Uint("parallel"), cctx.String("sealing-result"), cctx.String("sealing-temp")); err != nil {
+
+		fullNodeApi, closer, err := cliutil.GetFullNodeAPI(cctx)
+		if err != nil {
+			return xerrors.Errorf("Getting FullNodeAPI err:", err)
+		}
+		defer closer()
+
+		if err = RecoverSealedFile(ctx, fullNodeApi, rp, cctx.Uint("parallel"), cctx.String("sealing-result"), cctx.String("sealing-temp")); err != nil {
 			return err
 		}
 		log.Info("Complete recovery sealed!")
@@ -154,7 +167,7 @@ func migrateRecoverMeta(ctx context.Context, metadata string) (export.RecoveryPa
 	return rp, nil
 }
 
-func RecoverSealedFile(ctx context.Context, rp export.RecoveryParams, parallel uint, sealingResult string, sealingTemp string) error {
+func RecoverSealedFile(ctx context.Context,fullNodeApi v0api.FullNode, rp export.RecoveryParams, parallel uint, sealingResult string, sealingTemp string) error {
 	actorID, err := address.IDFromAddress(rp.Miner)
 	if err != nil {
 		return xerrors.Errorf("Getting IDFromAddress err:", err)
@@ -208,8 +221,26 @@ func RecoverSealedFile(ctx context.Context, rp export.RecoveryParams, parallel u
 				},
 				ProofType: sector.SealProof,
 			}
+			
+			buf := new(bytes.Buffer)
+			if err := rp.Miner.MarshalCBOR(buf); err != nil {
+				log.Errorf("rp.Miner.MarshalCBOR(buf) error")
 
-			log.Infof("Start recover sector(%d,%d), registeredSealProof: %d, ticket: %x", actorID, sector.SectorNumber, sector.SealProof, sector.Ticket)
+			}
+
+			ts, err := fullNodeApi.ChainGetTipSetByHeight(ctx, sector.TicketEpoch, types.EmptyTSK)
+			if err != nil {
+				log.Errorf("fullNodeApi.ChainGetTipSetByHeight error")
+
+			}
+		
+			ticket, err := fullNodeApi.StateGetRandomnessFromTickets(ctx, crypto.DomainSeparationTag_SealRandomness, sector.TicketEpoch, buf.Bytes(), ts.Key())
+			if err != nil {
+				log.Errorf("StateGetRandomnessFromTickets error")
+
+			}
+
+			log.Infof("Start recover sector(%d,%d), registeredSealProof: %d, ticket: %x", actorID, sector.SectorNumber, sector.SealProof, ticket)
 
 			log.Infof("Start running AP, sector (%d)", sector.SectorNumber)
 			pi, err := sb.AddPiece(context.TODO(), sid, nil, abi.PaddedPieceSize(rp.SectorSize).Unpadded(), nr.NewNullReader(abi.UnpaddedPieceSize(rp.SectorSize)))
@@ -221,7 +252,7 @@ func RecoverSealedFile(ctx context.Context, rp export.RecoveryParams, parallel u
 			log.Infof("Complete AP, sector (%d)", sector.SectorNumber)
 
 			log.Infof("Start running PreCommit1, sector (%d)", sector.SectorNumber)
-			pc1o, err := sb.SealPreCommit1(context.TODO(), sid, abi.SealRandomness(sector.Ticket), []abi.PieceInfo{pi})
+			pc1o, err := sb.SealPreCommit1(context.TODO(), sid, abi.SealRandomness(ticket), []abi.PieceInfo{pi})
 			if err != nil {
 				log.Errorf("Sector (%d) , running PreCommit1  error: %v", sector.SectorNumber, err)
 			}
