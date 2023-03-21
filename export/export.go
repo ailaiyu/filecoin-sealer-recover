@@ -96,6 +96,8 @@ var ExportsCmd = &cli.Command{
 				SectorNumber: abi.SectorNumber(sector),
 				SealProof:    sectorPreCommitOnChainInfo.Info.SealProof,
 				SealedCID:    sectorPreCommitOnChainInfo.Info.SealedCID,
+				TicketEpoch:  sectorPreCommitOnChainInfo.Info.SealRandEpoch,
+
 			}
 
 			ticket, err := GetSectorTicketOnChain(ctx, fullNodeApi, maddr, ts, sectorPreCommitOnChainInfo)
