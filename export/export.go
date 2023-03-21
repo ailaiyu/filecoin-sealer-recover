@@ -141,6 +141,7 @@ type SectorInfo struct {
 	Ticket       abi.Randomness
 	SealProof    abi.RegisteredSealProof
 	SealedCID    cid.Cid
+	TicketEpoch  abi.ChainEpoch
 }
 
 type SectorInfos []*SectorInfo
